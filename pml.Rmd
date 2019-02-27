@@ -1,0 +1,132 @@
+---
+title: "personal motion recognition"
+author: "Jie Wu"
+date: "February 26, 2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. The goal of this project is to use data from accelerometers on the (1) belt (2) forearm (3) arm and (4) dumbell of the participants to identify the 5 correct and incorrect ways of barbell lifting.
+
+
+
+## Data Source
+The training data for this project are available here:
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here:
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+The dataset used in this project is a courtesy of "Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements".
+
+
+
+## Date Processing
+First we remove the columns with missing values. It turns out that the columns are such that either they contain no missing value or the vast majority of entries are missing values (19262 out of 19622).
+```{r}
+suppressMessages(library(caret))
+training <- read.csv('pml-training.csv')
+## remove columns with NA
+varcol <- sapply(training, function(x) sum(is.na(x))) == 0
+training <- training[,varcol]
+```
+
+Now we extract the data produced from the four sensors on (1) belt (2) arm (3) dumbbell (4) forearm.
+```{r}
+## four sensors data
+beltcolindx <- grep('belt',names(training))
+armcolindx <- grep('_arm',names(training))
+dumbbellcolindx <- grep('dumbbell',names(training))
+forearmcolindx <- grep('forearm',names(training))
+colindx <- c(beltcolindx,armcolindx,dumbbellcolindx,
+             forearmcolindx,dim(training)[2])
+```
+
+Finally we remove columns with near zero variance. It turns out that all the factor columns are such columns. This removal leaves the remaining columns with either numeric or integer class type.
+```{r}
+nzv <- nearZeroVar(training)
+colindx <- setdiff(colindx,nzv)
+train <- training[,colindx]
+```
+
+## Prediction Analysis
+We first separate the data into training and validation set.
+```{r}
+inValid <- createDataPartition(y=train$classe,p=0.7,list=FALSE)
+builddata <- train[inValid,]
+validdata <- train[-inValid,]
+```
+
+#### Prediction using decision tree
+```{r}
+set.seed(1)
+library(rpart)
+system.time(fittree <- rpart(classe~.,data=builddata,method='class'))
+predtree <- predict(fittree,validdata,type='class')
+cfmtree <- confusionMatrix(predtree, validdata$classe)
+cfmtree
+sprintf("Confusion matrix accuracy of decision tree is %.4f",cfmtree$overall[1])
+```
+
+#### Prediction using linear discriminant analysis
+```{r}
+system.time(fitlda <- train(classe~.,data=builddata,method='lda'))
+predlda <- predict(fitlda,validdata)
+cfmlda <- confusionMatrix(predlda, validdata$classe)
+cfmlda
+sprintf("Confusion matrix accuracy of linear discriminant is %.4f",cfmlda$overall[1])
+```
+
+#### Prediction using random forest
+```{r}
+ctrlrf <- trainControl(method='cv',number=3,verboseIter=FALSE)
+system.time(fitrf <-train(classe~.,data=builddata,method='rf',trControl=ctrlrf))
+## summary(fitrf$finalModel)
+predrf <- predict(fitrf,validdata)
+cfmrf <- confusionMatrix(predrf, validdata$classe)
+cfmrf
+sprintf("Confusion matrix accuracy of random forest is %.4f",cfmrf$overall[1])
+```
+
+#### Prediction using gradient boosting model
+```{r}
+ctrlgbm <- trainControl(method='repeatedcv',number=3,repeats=1)
+system.time(fitgbm <- train(classe~.,data=builddata,method='gbm',
+                                    trControl=ctrlgbm,verbose=FALSE))
+## summary(fitgbm$finalModel)
+predgbm <- predict(fitgbm,validdata)
+cfmgbm <- confusionMatrix(predgbm, validdata$classe)
+cfmgbm
+sprintf("Confusion matrix accuracy of boosted trees is %.4f",cfmgbm$overall[1])
+```
+
+Comparing the four models above we see that random forest yields the best accuracy yet it takes the longest time, which is followed by gradient boosting, decision trees and linear discriminant analysis. In fact the performance of random forest and gradient boosting machine are comparable yet random forest takes almost twice as long time to finish. Although this may not be a big issue for such a small data set the tradeoff should be made between accuracy and computational cost when choosing from random forest and gradient boosting for big data classification.
+
+
+
+## Predicting Test Data
+We now use the best prediction model found above to predict test data.
+```{r}
+testing <- read.csv('pml-testing.csv')
+testing <- testing[,varcol]
+test <- testing[,colindx]
+quizans <- predict(fitrf,test)
+quizans
+```
+
+
+
+## Appendix
+Among the four models only the decision tree yields a fairly interpretable model. The rest works like a black box. We hence only plot the decision tree model below.
+```{r}
+library(rpart.plot)
+prp(fittree)
+```
